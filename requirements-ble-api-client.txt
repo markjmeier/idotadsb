@@ -1,0 +1,9 @@
+# Optional: iDotMatrix over BLE (only supported hardware path in this repo).
+# GitHub markusressel/idotmatrix-api-client (import name ``idotmatrix``): IDotMatrixClient + upload_image_file.
+#
+# Conflicts with the unrelated PyPI package named idotmatrix. Uninstall if present:
+#   pip uninstall -y idotmatrix
+#
+-r requirements.txt
+Pillow>=10.0.0
+git+https://github.com/markusressel/idotmatrix-api-client.git
