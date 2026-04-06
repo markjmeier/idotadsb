@@ -135,6 +135,8 @@ python -m app.main
 
 **Tests:** `pytest` from repo root (see `pytest.ini`).
 
+**Feed only (no app):** check that `DATA_SOURCE_URL` returns JSON, e.g. `curl -sS --max-time 3 "$DATA_SOURCE_URL" | head -c 200`.
+
 ---
 
 ## systemd (optional, Linux / Pi)
