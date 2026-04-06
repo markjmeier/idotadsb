@@ -1,6 +1,6 @@
 # idotadsb — production notes
 
-Personal ADS-B feeder → iDotMatrix LED panel. This doc summarizes **architecture**, **v3 cards**, **data sources**, and **how to run it reliably**. Detailed layout math lives in `layoutcontract.md`; v3 product notes in `version3spec.md`.
+Personal ADS-B feeder → iDotMatrix LED panel. This doc summarizes **architecture**, **v3 cards**, **data sources**, and **how to run it reliably**. Optional design specs (gitignored) can live under `docs/specs/` — e.g. `docs/specs/layoutcontract.md`, `docs/specs/version3spec.md`.
 
 ---
 
@@ -163,11 +163,9 @@ Ensure the service user can use **Bluetooth** (often `bluetooth` group).
 
 ---
 
-## Related files
+## Related files (local, not in git)
 
-- `version3spec.md` — v3 UI spec history  
-- `layoutcontract.md` — pixel bands / fonts  
-- `displayspec.md`, `additionaldisplayspec.md` — older display notes  
+The `docs/specs/` directory is **gitignored**. Keep your own copies there if you want layout/UI reference docs alongside the repo.
 
 ---
 

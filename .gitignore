@@ -1,4 +1,7 @@
 .DS_Store
+# Design specs (local only — not committed)
+docs/specs/
+
 __pycache__/
 *.py[cod]
 .venv/
