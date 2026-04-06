@@ -5,7 +5,7 @@ Colors come entirely from our Pillow PNG (airline / motion / snap). The libraryâ
 ``upload_image_file`` re-opens the file and resizes with LANCZOS, which can smear
 quantized pixels; we send exact-size RGB with ``ImageModule._send_diy_image_data`` instead.
 
-Install: ``requirements-ble-api-client.txt``. Do not install the unrelated PyPI package ``idotmatrix``.
+Install: ``requirements.txt`` (GitHub idotmatrix-api-client). Do not install the unrelated PyPI package ``idotmatrix``.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ def idotmatrix_panel_edge_pixels(configured_px: int) -> int:
 def _idotmatrix_api_client_install_hint() -> str:
     return (
         "DISPLAY_BACKEND=idotmatrix_api_client needs GitHub idotmatrix-api-client. "
-        "See requirements-ble-api-client.txt (avoid the PyPI package named idotmatrix)."
+        "See requirements.txt (GitHub idotmatrix-api-client; avoid the PyPI package named idotmatrix)."
     )
 
 

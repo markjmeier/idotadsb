@@ -111,7 +111,7 @@ Copy **`.env.example` → `.env`** (`.env` is gitignored).
 Production checklist:
 
 - **`DATA_SOURCE_URL`** — reachable from the machine running the app (Pi or laptop).
-- **`DISPLAY_BACKEND=idotmatrix_api_client`** — install **`requirements-ble-api-client.txt`** (not the unrelated PyPI `idotmatrix` package).
+- **`DISPLAY_BACKEND=idotmatrix_api_client`** — included in **`requirements.txt`** (GitHub `idotmatrix-api-client`, not the unrelated PyPI `idotmatrix` package).
 - **`IDOTMATRIX_BLE_ADDRESS`** — set if multiple BLE devices exist.
 - **`IDOTMATRIX_FONT_PATH`** — required for canvas on headless systems without DejaVu.
 - **`HOME_LAT` / `HOME_LON`** — v3 carousel ordering by distance when JSON has no `nm`.
@@ -128,7 +128,6 @@ See `.env.example` for the full list.
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-pip install -r requirements-ble-api-client.txt   # for BLE hardware
 cp .env.example .env   # then edit .env
 python -m app.main
 ```

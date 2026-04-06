@@ -134,7 +134,7 @@ def create_display(settings: Settings) -> Display:
     if backend == "idotmatrix":
         logger.warning(
             "DISPLAY_BACKEND=idotmatrix (removed legacy PyPI stack) is ignored; "
-            "use idotmatrix_api_client with requirements-ble-api-client.txt, or mock."
+            "use idotmatrix_api_client (requirements.txt) or mock."
         )
         return MockDisplay()
     if backend == "mock":

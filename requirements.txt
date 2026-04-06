@@ -1,5 +1,13 @@
+# idotadsb — runtime + tests + canvas + BLE (DISPLAY_BACKEND=idotmatrix_api_client).
+#
+# The GitHub line below is markusressel/idotmatrix-api-client (import name: idotmatrix).
+# It is NOT the unrelated PyPI package named idotmatrix. If you had the wrong one:
+#   pip uninstall -y idotmatrix
+#
 requests>=2.31.0
-# Used by ADSBDB enrichment (urllib) so macOS/Python.org installs verify TLS like requests does.
+# ADSBDB enrichment (urllib TLS); matches requests’ CA bundle on macOS etc.
 certifi>=2023.5.7
 pytest>=8.0.0
 python-dotenv>=1.0.1
+Pillow>=10.0.0
+git+https://github.com/markusressel/idotmatrix-api-client.git
