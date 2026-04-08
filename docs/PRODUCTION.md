@@ -198,11 +198,14 @@ git clone https://github.com/<you>/idotadsb.git
 cd idotadsb
 ```
 
-Or **rsync/scp** from your laptop (repo root → Pi), e.g.:
+Or **rsync/scp** from your laptop (from the **repo root** — the directory that contains `app/` — → Pi), e.g.:
 
 ```bash
-rsync -avz --exclude '.venv' --exclude '.git' ./idotadsb/ pi@raspberrypi.local:~/idotadsb/
+cd /path/to/idotadsb   # repo root, not a parent folder
+rsync -avz --exclude '.venv' --exclude '.git' ./ pi@raspberrypi.local:~/idotadsb/
 ```
+
+Use `./` as the source here. `./idotadsb/` only works if your current directory is the **parent** of the project folder (and the project is named `idotadsb`); otherwise rsync fails with `(l)stat: No such file or directory`.
 
 Then on the Pi: `cd ~/idotadsb` (or your path).
 
