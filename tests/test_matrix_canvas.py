@@ -5,6 +5,7 @@ import pytest
 from app.matrix_canvas import (
     FLIGHT_BOXES_64,
     FLIGHT_CARD_LIVE_ROUTE_64,
+    SQUAWK_ALERT_BOXES_64,
     draw_text_in_box,
     render_lines_png,
     render_panel_view,
@@ -95,19 +96,22 @@ def test_draw_text_in_box_runs(font_path: str) -> None:
     assert img.tobytes() != before
 
 
-def test_render_panel_view_alert_climb_is_png(font_path: str) -> None:
+def test_layout_contract_squawk_boxes_tile_64() -> None:
+    y = 0
+    for key in ("l1", "l2", "l3", "l4"):
+        b = SQUAWK_ALERT_BOXES_64[key]
+        assert b[0] == 0 and b[2] == 64
+        assert b[1] == y
+        y += b[3]
+    assert y == 64
+
+
+def test_render_panel_view_alert_squawk_is_png(font_path: str) -> None:
     from app.models import Aircraft
 
-    ac = Aircraft(
-        hex="a1b2c3",
-        flight="DAL2310",
-        altitude_ft=12000,
-        speed_kt=380.0,
-        track_deg=45.0,
-        baro_rate_fpm=3200,
-    )
-    view = PanelView("alert_climb", ac, None)
-    png = render_panel_view(view, 64, font_path)
+    ac = Aircraft(hex="a1b2c3", flight="DAL2310  ", squawk="7700", seen_s=1.0)
+    view = PanelView("alert_squawk", ac, None)
+    png = render_panel_view(view, 64, font_path, alert_panel=True)
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
 
 

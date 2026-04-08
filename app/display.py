@@ -41,6 +41,10 @@ class Display(ABC):
         """Structured flight card / alert / idle (see displayspec.md)."""
         ...
 
+    def set_quiet_hours_active(self, active: bool) -> None:
+        """Dim or blank hardware during local quiet hours; restore when ``active`` is False."""
+        return None
+
     def close(self) -> None:
         """Release resources (optional)."""
         return None
@@ -66,6 +70,9 @@ class MockDisplay(Display):
 
         tag = "ALERT panel" if alert else "panel"
         logger.info("MockDisplay %s:\n%s", tag, panel_view_mock_text(view))
+
+    def set_quiet_hours_active(self, active: bool) -> None:
+        logger.info("MockDisplay quiet_hours=%s", active)
 
 
 class _AsyncLoopThread:

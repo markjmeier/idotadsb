@@ -56,26 +56,21 @@ class Settings:
     http_timeout_seconds: float
     stale_seconds: float
     stale_position_seconds: float
-    low_altitude_feet: int
-    high_rssi_threshold: float
-    rotate_top_n: int
     v3_rotate_top_n: int
     rotate_interval_seconds: float
-    display_mode: str  # "closest" | "rotate" | "v3"
     enable_distance: bool
     home_lat: float | None
     home_lon: float | None
     log_level: str
     display_backend: str  # "mock" | "idotmatrix_api_client"
     idle_message: str
-    debounce_seconds: float
     rssi_weight: float
     freshness_weight: float
     callsign_bonus: float
     position_bonus: float
     distance_bonus_max: float
     degraded_stale_seconds: float
-    rapid_rate_fpm: int
+    squawk_alerting_enabled: bool
     idotmatrix_ble_address: str | None
     idotmatrix_font_path: str | None
     idotmatrix_render: str  # "canvas" | "text"
@@ -112,6 +107,13 @@ class Settings:
     enrichment_refetch_interval_seconds: float
     enrichment_min_lookup_interval_seconds: float
     enrichment_http_timeout_seconds: float
+    # Local wall-clock quiet hours: skip feeder + enrichment HTTP; dim/blank panel (BLE).
+    quiet_hours_enabled: bool
+    quiet_hours_start_hour: int
+    quiet_hours_end_hour: int
+    quiet_hours_timezone: str
+    quiet_hours_poll_interval_seconds: float
+    quiet_hours_brightness_pct: int
 
     @staticmethod
     def from_env() -> Settings:
@@ -175,26 +177,21 @@ class Settings:
             http_timeout_seconds=_env_float("HTTP_TIMEOUT_SECONDS", 3.0),
             stale_seconds=_env_float("STALE_SECONDS", 10.0),
             stale_position_seconds=_env_float("STALE_POSITION_SECONDS", 10.0),
-            low_altitude_feet=_env_int("LOW_ALTITUDE_FEET", 5000),
-            high_rssi_threshold=_env_float("HIGH_RSSI_THRESHOLD", -10.0),
-            rotate_top_n=max(1, _env_int("ROTATE_TOP_N", 3)),
             v3_rotate_top_n=max(1, _env_int("V3_ROTATE_TOP_N", 5)),
             rotate_interval_seconds=_env_float("ROTATE_INTERVAL_SECONDS", 3.0),
-            display_mode=_env_str("DISPLAY_MODE", "closest").lower(),
             enable_distance=_env_bool("ENABLE_DISTANCE", False),
             home_lat=home_lat,
             home_lon=home_lon,
             log_level=_env_str("LOG_LEVEL", "INFO").upper(),
             display_backend=_env_str("DISPLAY_BACKEND", "mock").lower(),
             idle_message=_env_str("IDLE_MESSAGE", "NO PLANES"),
-            debounce_seconds=_env_float("DEBOUNCE_SECONDS", 2.0),
             rssi_weight=_env_float("RSSI_WEIGHT", 1.0),
             freshness_weight=_env_float("FRESHNESS_WEIGHT", 2.0),
             callsign_bonus=_env_float("CALLSIGN_BONUS", 5.0),
             position_bonus=_env_float("POSITION_BONUS", 3.0),
             distance_bonus_max=_env_float("DISTANCE_BONUS_MAX", 15.0),
             degraded_stale_seconds=_env_float("DEGRADED_STALE_SECONDS", 60.0),
-            rapid_rate_fpm=max(500, _env_int("RAPID_RATE_FPM", 2000)),
+            squawk_alerting_enabled=_env_bool("SQUAWK_ALERTING_ENABLED", False),
             idotmatrix_ble_address=addr,
             idotmatrix_font_path=font,
             idotmatrix_render=render,
@@ -233,4 +230,12 @@ class Settings:
                 0.0, _env_float("ENRICHMENT_MIN_LOOKUP_INTERVAL_SECONDS", 5.0)
             ),
             enrichment_http_timeout_seconds=max(0.5, _env_float("ENRICHMENT_HTTP_TIMEOUT_SECONDS", 3.0)),
+            quiet_hours_enabled=_env_bool("QUIET_HOURS_ENABLED", False),
+            quiet_hours_start_hour=max(0, min(23, _env_int("QUIET_HOURS_START_HOUR", 23))),
+            quiet_hours_end_hour=max(0, min(23, _env_int("QUIET_HOURS_END_HOUR", 7))),
+            quiet_hours_timezone=_env_str("QUIET_HOURS_TIMEZONE", ""),
+            quiet_hours_poll_interval_seconds=max(
+                1.0, _env_float("QUIET_HOURS_POLL_INTERVAL_SECONDS", 60.0)
+            ),
+            quiet_hours_brightness_pct=max(0, min(100, _env_int("QUIET_HOURS_BRIGHTNESS_PCT", 0))),
         )

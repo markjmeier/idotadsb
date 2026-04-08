@@ -1,17 +1,18 @@
 # idotadsb — production notes
 
-Personal ADS-B feeder → iDotMatrix LED panel. This doc summarizes **architecture**, **v3 cards**, **data sources**, and **how to run it reliably**. Optional design specs (gitignored) can live under `docs/specs/` — e.g. `docs/specs/layoutcontract.md`, `docs/specs/version3spec.md`.
+Personal ADS-B feeder → iDotMatrix LED panel. This doc summarizes **architecture**, **v3 UI**, **optional squawk + quiet hours**, **ADSBDB enrichment**, and **how to run reliably**. Optional design specs (gitignored) can live under `docs/specs/` — e.g. `docs/specs/layoutcontract.md`, `docs/specs/version3spec.md`.
 
 ---
 
 ## What it does
 
 1. Poll **`aircraft.json`** from your receiver (readsb / dump1090 / SkyAware-style URL).
-2. Filter stale rows, then pick a **display mode** (`closest`, `rotate`, or `v3`).
-3. Build a **`PanelView`** (flight / idle / alert).
-4. Render a **Pillow canvas** (64×64-style contract) and, with hardware, upload over **BLE** via [markusressel/idotmatrix-api-client](https://github.com/markusressel/idotmatrix-api-client) (`DISPLAY_BACKEND=idotmatrix_api_client`).
+2. If **quiet hours** are active (local wall clock), **skip** feeder fetches and ADSBDB, and **dim/blank** the panel until the window ends.
+3. If **squawk alerting** is enabled and the feed shows **7500 / 7600 / 7700**, show a **full-screen squawk alert** (latched until that aircraft clears the code or disappears). No v3 carousel and **no enrichment** while latched.
+4. Otherwise run the **v3 carousel**: up to **`V3_ROTATE_TOP_N`** aircraft with hex + callsign, ordered by distance (from JSON `nm` or **`HOME_LAT`/`HOME_LON`**), alternating **Live** / **Identity** cards.
+5. Render a **Pillow** canvas (64×64-style contract) and, with hardware, upload over **BLE** via [markusressel/idotmatrix-api-client](https://github.com/markusressel/idotmatrix-api-client) (`DISPLAY_BACKEND=idotmatrix_api_client`).
 
-Optional **ADSBDB** lookups enrich v3 with route, airline, and aircraft description.
+Optional **ADSBDB** lookups enrich v3 Identity + Live route line.
 
 ---
 
@@ -39,30 +40,34 @@ flowchart LR
   MAIN --> PV --> MC --> DISP
 ```
 
+(Quiet-hours and squawk logic live inside `main.run_loop`; `app/quiet_hours.py` supplies the time window helper.)
+
 | Module | Role |
 |--------|------|
 | `app/config.py` | `Settings.from_env()` — all knobs from `.env` |
 | `app/aircraft_source.py` | HTTP fetch + parse JSON → `list[Aircraft]` |
-| `app/aircraft_filter.py` | Freshness, scoring, `top_n_v3_carousel`, alerts (alerts skipped in v3) |
-| `app/main.py` | Main loop: poll → `PanelView` → `display.show_panel()` |
+| `app/aircraft_filter.py` | Freshness, scoring, `top_n_v3_carousel`, emergency squawk helpers |
+| `app/quiet_hours.py` | Local hour + overnight/same-day window for quiet hours |
+| `app/main.py` | Main loop: quiet gate → squawk latch → v3 carousel → `display.show_panel()` |
 | `app/enrichment.py` | Background ADSBDB fetch, cache, merge with callsign endpoint |
-| `app/panel_view.py` | Semantic view + `critical_fingerprint` / `visual_fingerprint` (BLE debounce) |
-| `app/matrix_canvas.py` | PNG layout (flight cards, alerts) |
+| `app/panel_view.py` | `PanelView` kinds: `flight` / `idle` / `alert_squawk` + fingerprints |
+| `app/matrix_canvas.py` | PNG layout (v3 cards, squawk 4-line alert) |
 | `app/matrix_theme.py` | `MatrixColorProfile` (airline + motion colors) |
 | `app/idotmatrix_diy.py` | Optional palette snap before BLE upload |
-| `app/display_idotmatrix_api_client.py` | BLE client, DIY RGB upload |
+| `app/display_idotmatrix_api_client.py` | BLE client, DIY RGB upload, quiet-hours dim/restore |
 
 ---
 
-## Display modes
+## v3 carousel (normal operation)
 
-| Mode | Selection | Notes |
-|------|-----------|--------|
-| **`closest`** | Single best aircraft by score + debounce | Classic |
-| **`rotate`** | Top `ROTATE_TOP_N` by score, advance every `ROTATE_INTERVAL_SECONDS` | Panel alerts allowed |
-| **`v3`** | Top `V3_ROTATE_TOP_N` with **hex + callsign**, ordered by distance (or score fallback) | ADSBDB batch, **no** panel alert takeover |
+| Setting | Role |
+|---------|------|
+| **`V3_ROTATE_TOP_N`** | Max aircraft in the rotating list (hex + callsign required per slot). |
+| **`ROTATE_INTERVAL_SECONDS`** | Dwell on each aircraft before advancing the carousel. |
+| **`POLL_INTERVAL_SECONDS`** | How often to fetch `aircraft.json`. |
+| **`CARD_ROTATION_SECONDS`** | Alternation between Live vs Identity card for the **current** carousel aircraft. |
 
-Shared timing: **`POLL_INTERVAL_SECONDS`** between JSON polls; **`ROTATE_INTERVAL_SECONDS`** is also the **dwell per aircraft** in v3’s carousel.
+Scoring when distance is unknown uses RSSI + freshness + optional **`HOME_*`** (`ENABLE_DISTANCE`, `DISTANCE_BONUS_MAX`, etc.).
 
 ---
 
@@ -95,12 +100,31 @@ Identity only appears if enrichment has at least one of type / route / airline (
 
 ---
 
+## Squawk emergency alert
+
+- **Enable:** `SQUAWK_ALERTING_ENABLED=true`.
+- **Codes:** **7500**, **7600**, **7700** (from the `squawk` field in `aircraft.json`).
+- **UI:** Full-screen **ALERT / SQUAWK / code / flight** (`alert_squawk`); uses alert/chroma colors on BLE.
+- **Latch:** Stays on that **hex** until the aircraft drops from the feed or the squawk is no longer emergency-class. New emergencies use the same latch rules.
+- **While latched:** No v3 carousel updates and **no** ADSBDB `schedule_fetch` (feeds still run for squawk detection only).
+
+---
+
+## Quiet hours
+
+- **Enable:** `QUIET_HOURS_ENABLED=true`.
+- **Window:** `QUIET_HOURS_START_HOUR` / `QUIET_HOURS_END_HOUR` as integers **0–23** (whole hours only). If **start > end**, the quiet window **wraps midnight** (e.g. 23→7: quiet from 23:00 through 06:59). If **start < end**, quiet is the **same calendar day** span.
+- **Timezone:** `QUIET_HOURS_TIMEZONE` (IANA, e.g. `America/New_York`) or empty for **system/local** (`TZ` on the Pi).
+- **Behavior:** No `aircraft.json` fetch, no enrichment; sleeps `QUIET_HOURS_POLL_INTERVAL_SECONDS` between checks. BLE dims + black frame per `QUIET_HOURS_BRIGHTNESS_PCT` / panel limits.
+
+---
+
 ## ADSBDB enrichment
 
-- **When:** `DISPLAY_MODE=v3` and `ENABLE_ADSBDB_ENRICHMENT=true`.
+- **When:** `ENABLE_ADSBDB_ENRICHMENT=true` (and not in quiet hours; not while a squawk alert is latched).
 - **What:** For each aircraft in the current v3 top-N set, schedule `GET /v0/aircraft/{hex}?callsign=…`; may add `GET /v0/callsign/{callsign}` if route/airline still missing.
 - **TLS:** Uses **certifi** CA bundle for `urllib` (important on macOS Python).
-- **Cache:** TTL + refetch interval + min gap between requests; **callsign change** on same hex triggers refetch.
+- **Cache:** TTL + refetch interval + min gap between requests; **callsign change** on same hex triggers refetch. Fresh cache merge prefers new route/airline after refetch.
 
 ---
 
@@ -112,10 +136,12 @@ Production checklist:
 
 - **`DATA_SOURCE_URL`** — reachable from the machine running the app (Pi or laptop).
 - **`DISPLAY_BACKEND=idotmatrix_api_client`** — included in **`requirements.txt`** (GitHub `idotmatrix-api-client`, not the unrelated PyPI `idotmatrix` package).
-- **`IDOTMATRIX_BLE_ADDRESS`** — set if multiple BLE devices exist.
+- **`IDOTMATRIX_BLE_ADDRESS`** — set for real hardware.
 - **`IDOTMATRIX_FONT_PATH`** — required for canvas on headless systems without DejaVu.
 - **`HOME_LAT` / `HOME_LON`** — v3 carousel ordering by distance when JSON has no `nm`.
 - **`POLL_INTERVAL_SECONDS`** — lower load on the Pi vs snappier updates.
+- **`SQUAWK_ALERTING_ENABLED`** — optional emergency squawk takeover.
+- **`QUIET_HOURS_*`** — optional nightly dim + pause (see [Quiet hours](#quiet-hours)).
 - **`LOG_LEVEL=INFO`** — ADSBDB failures log at WARNING.
 
 See `.env.example` for the full list.
@@ -132,9 +158,131 @@ cp .env.example .env   # then edit .env
 python -m app.main
 ```
 
+### Reactivate the venv (new shell, venv “deactivated”, or SSH)
+
+The project uses a **repo-local** env at **`.venv/`** (gitignored). After `cd` to the repo root:
+
+| Shell | Command |
+|--------|---------|
+| **bash / zsh (macOS, Linux, Pi)** | `source .venv/bin/activate` |
+| **fish** | `source .venv/bin/activate.fish` |
+| **Windows cmd** | `.venv\Scripts\activate.bat` |
+| **Windows PowerShell** | `.\.venv\Scripts\Activate.ps1` |
+
+You should see `(.venv)` in the prompt and `which python` / `where python` pointing inside `.venv`. Then run `python -m app.main` as usual.
+
+If **`.venv` is missing**, recreate it with the block at the top of this section (`python3 -m venv .venv` → activate → `pip install -r requirements.txt`).
+
 **Tests:** `pytest` from repo root (see `pytest.ini`).
 
 **Feed only (no app):** check that `DATA_SOURCE_URL` returns JSON, e.g. `curl -sS --max-time 3 "$DATA_SOURCE_URL" | head -c 200`.
+
+---
+
+## Raspberry Pi deployment
+
+### 1. Prerequisites on the Pi
+
+- **Raspberry Pi OS** (or similar) with **Python 3.11+** (`python3 --version`).
+- **Network** to your ADS-B host (same LAN is typical). The Pi must open `DATA_SOURCE_URL` (often `http://<feeder-ip>/skyaware/data/aircraft.json`).
+- **Bluetooth** enabled and **BlueZ** running (default on Pi OS Desktop; on Lite, install/enable Bluetooth packages as needed).
+- **Git** installed (`sudo apt update && sudo apt install -y git`) — required for `pip` to install the GitHub `idotmatrix-api-client` line in `requirements.txt`.
+
+### 2. Copy the project to the Pi
+
+Pick one:
+
+```bash
+# From GitHub (after you push)
+git clone https://github.com/<you>/idotadsb.git
+cd idotadsb
+```
+
+Or **rsync/scp** from your laptop (repo root → Pi), e.g.:
+
+```bash
+rsync -avz --exclude '.venv' --exclude '.git' ./idotadsb/ pi@raspberrypi.local:~/idotadsb/
+```
+
+Then on the Pi: `cd ~/idotadsb` (or your path).
+
+### 3. Python venv and dependencies
+
+```bash
+cd ~/idotadsb   # or your clone path
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+If **Pillow** fails to build wheels, install build deps then retry:
+
+```bash
+sudo apt install -y python3-dev libjpeg-dev zlib1g-dev
+pip install -r requirements.txt
+```
+
+### 4. Configuration (`.env`)
+
+```bash
+cp .env.example .env
+nano .env   # or your editor
+```
+
+Minimum to align with your laptop:
+
+- **`DATA_SOURCE_URL`** — use a URL the **Pi** can reach (feeder LAN IP, not only `localhost` unless the feeder runs on the same Pi).
+- **`DISPLAY_BACKEND=idotmatrix_api_client`**
+- **`IDOTMATRIX_BLE_ADDRESS`** — BLE MAC of the panel (see below).
+- **`IDOTMATRIX_FONT_PATH`** — on a headless Pi, set an explicit `.ttf`, e.g. after `sudo apt install -y fonts-dejavu-core`:
+
+  `IDOTMATRIX_FONT_PATH=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf`
+
+- Copy over **`HOME_*`**, v3 / ADSBDB / squawk / quiet-hours settings from your working laptop `.env` as needed.
+
+### 5. Bluetooth address (optional but recommended)
+
+With the panel powered and not connected to another device:
+
+```bash
+bluetoothctl
+# scan on
+# wait until you see IDM-… or similar, then:
+# scan off
+exit
+```
+
+Note the device **MAC** (e.g. `AA:BB:CC:DD:EE:FF`) and set `IDOTMATRIX_BLE_ADDRESS=` in `.env`.
+
+Ensure the user running the app can use Bluetooth:
+
+```bash
+sudo usermod -aG bluetooth $USER
+# log out and back in (or reboot)
+```
+
+### 6. Smoke test (foreground)
+
+```bash
+cd ~/idotadsb
+source .venv/bin/activate
+set -a && source .env && set +a   # load env into shell for curl test
+curl -sS --max-time 3 "$DATA_SOURCE_URL" | head -c 200
+python -m app.main
+```
+
+Stop with **Ctrl+C**. Fix `DATA_SOURCE_URL`, font path, or BLE until the panel updates.
+
+### 7. Run at boot (systemd)
+
+Use the unit in the [systemd](#systemd-optional-linux--pi) section below. Adjust **`User=`**, **`WorkingDirectory=`**, **`EnvironmentFile=`**, and **`ExecStart=`** to match the Pi user and paths. Then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now idotadsb.service
+journalctl -u idotadsb.service -f
+```
 
 ---
 

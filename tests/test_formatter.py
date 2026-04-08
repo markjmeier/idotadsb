@@ -10,8 +10,6 @@ from app.formatter import (
     format_idle,
     format_idle_marquee,
     format_live_card_motion_line,
-    format_low_alert_lines,
-    format_low_alert_marquee,
     matrix_route_display,
     track_to_arrow,
     track_to_cardinal,
@@ -121,11 +119,6 @@ def test_format_closest_lines() -> None:
     )
 
 
-def test_format_low_alert_lines() -> None:
-    ac = Aircraft(hex="abc", flight="PJC65", altitude_ft=4900)
-    assert format_low_alert_lines(ac) == "LOW ✈\nALERT\nPJC65\n4.9k"
-
-
 def test_format_idle() -> None:
     assert format_idle("NO PLANES") == "NO PLANES\n\nlistening\nADS-B"
     assert format_idle("  SCANNING  ") == "SCANNING\n\nlistening\nADS-B"
@@ -142,12 +135,6 @@ def test_format_closest_marquee_single_line() -> None:
     assert format_closest_marquee(ac) == "JBU816 22k 400kt NE"
     ac2 = Aircraft(hex="abc", flight="X", altitude_ft=1000, speed_kt=None, track_deg=None)
     assert format_closest_marquee(ac2) == "X 1k ---"
-
-
-def test_format_low_alert_marquee_no_split_alert_word() -> None:
-    ac = Aircraft(hex="abc", flight="PJC65", altitude_ft=4900)
-    assert format_low_alert_marquee(ac) == "LOW PJC65 4.9k"
-    assert "ALERT" not in format_low_alert_marquee(ac)
 
 
 def test_format_idle_marquee() -> None:

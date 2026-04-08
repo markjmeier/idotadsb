@@ -107,6 +107,8 @@ class IDotMatrixApiClientDisplay(Display):
         self._connected = False
         self._client: Any = None
         self._render_px = idotmatrix_panel_edge_pixels(settings.idotmatrix_pixel_size)
+        self._quiet_hours_active = False
+        self._brightness_before_quiet: int | None = None
 
     def _have_api_client(self) -> bool:
         try:
@@ -160,7 +162,7 @@ class IDotMatrixApiClientDisplay(Display):
         await client.connect()
 
         b = s.idotmatrix_brightness_pct
-        if b is not None:
+        if b is not None and not self._quiet_hours_active:
             await client.set_brightness(int(b))
 
         if s.idotmatrix_diy_reset:
@@ -266,6 +268,70 @@ class IDotMatrixApiClientDisplay(Display):
             except Exception as e2:
                 logger.warning("IDotMatrixApiClientDisplay reconnect failed: %s", e2)
                 return False
+
+    async def _async_set_brightness_clamped(self, pct: int) -> None:
+        client = self._client
+        if client is None:
+            return
+        b = max(5, min(100, int(pct)))
+        await client.set_brightness(b)
+
+    async def _async_upload_black_frame(self) -> None:
+        client = self._client
+        if client is None:
+            raise RuntimeError("iDotMatrix client not connected")
+        edge = self._render_px
+        rgb = bytearray(edge * edge * 3)
+        await asyncio.sleep(0.02)
+        await client.image._send_diy_image_data(rgb)
+
+    async def _async_enter_quiet_hours(self) -> None:
+        s = self._settings
+        self._brightness_before_quiet = s.idotmatrix_brightness_pct
+        q = s.quiet_hours_brightness_pct
+        night = 5 if q <= 0 else max(5, min(100, q))
+        try:
+            await self._async_set_brightness_clamped(night)
+        except Exception as e:
+            logger.debug("quiet hours set brightness: %s", e)
+        try:
+            await self._async_upload_black_frame()
+        except Exception as e:
+            logger.warning("quiet hours black frame failed: %s", e)
+
+    async def _async_exit_quiet_hours(self) -> None:
+        rb = self._brightness_before_quiet
+        self._brightness_before_quiet = None
+        if rb is not None and self._client is not None:
+            try:
+                await self._async_set_brightness_clamped(int(rb))
+            except Exception as e:
+                logger.debug("restore brightness after quiet hours: %s", e)
+
+    def set_quiet_hours_active(self, active: bool) -> None:
+        if active == self._quiet_hours_active:
+            return
+        if not self._runner.is_running:
+            try:
+                self._runner.start()
+            except Exception as e:
+                logger.error("BLE thread start failed: %s", e)
+                return
+
+        async def _go() -> None:
+            if active:
+                self._quiet_hours_active = True
+                await self._async_enter_quiet_hours()
+            else:
+                await self._async_exit_quiet_hours()
+                self._quiet_hours_active = False
+
+        try:
+            self._runner.run_coro(_go(), timeout=45.0)
+        except Exception as e:
+            logger.warning("set_quiet_hours_active(%s): %s", active, e)
+            if active:
+                self._quiet_hours_active = False
 
     def _flatten(self, text: str) -> str:
         return "  ".join(line.strip() for line in text.splitlines() if line.strip())
@@ -398,6 +464,16 @@ class IDotMatrixApiClientDisplay(Display):
         self.show_text(" ")
 
     def close(self) -> None:
+        if self._quiet_hours_active and self._runner.is_running:
+            try:
+
+                async def _restore() -> None:
+                    await self._async_exit_quiet_hours()
+
+                self._runner.run_coro(_restore(), timeout=15.0)
+            except Exception as e:
+                logger.debug("BLE close quiet restore: %s", e)
+            self._quiet_hours_active = False
         if self._client is not None and self._runner.is_running:
             try:
                 self._runner.run_coro(self._async_disconnect(), timeout=15.0)

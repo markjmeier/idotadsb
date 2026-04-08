@@ -148,14 +148,6 @@ def format_closest_lines(ac: Aircraft) -> str:
     return "\n".join([line1, line2, line3, line4])
 
 
-def format_low_alert_lines(ac: Aircraft) -> str:
-    line1 = "LOW ✈"
-    line2 = "ALERT"
-    line3 = callsign_or_hex(ac)
-    line4 = format_altitude_k(ac.altitude_ft)
-    return "\n".join([line1, line2, line3, line4])
-
-
 def format_idle(idle_message: str) -> str:
     m = idle_message.strip() or "NO PLANES"
     return "\n".join([m, "", "listening", "ADS-B"])
@@ -170,11 +162,6 @@ def format_closest_marquee(ac: Aircraft) -> str:
     if ac.track_deg is not None:
         parts.append(track_to_cardinal(ac.track_deg))
     return " ".join(parts)
-
-
-def format_low_alert_marquee(ac: Aircraft) -> str:
-    """One line; short tokens for small static grids / marquee."""
-    return f"LOW {callsign_or_hex(ac)} {format_altitude_k(ac.altitude_ft)}"
 
 
 def format_idle_marquee(idle_message: str) -> str:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable, List, Literal, Sequence, Tuple
+from typing import Iterable, List, Sequence, Tuple
 
 from app.config import Settings
 from app.models import Aircraft
@@ -114,11 +113,6 @@ def pick_best_v3(aircraft: Sequence[Aircraft], settings: Settings) -> Aircraft |
     return with_dist[0][0]
 
 
-def top_n(aircraft: Sequence[Aircraft], settings: Settings, n: int) -> List[Aircraft]:
-    ranked = rank_aircraft(aircraft, settings)
-    return [ac for ac, _ in ranked[: max(0, n)]]
-
-
 def _v3_carousel_eligible(ac: Aircraft) -> bool:
     """v3 rotate + ADSBDB: need ICAO hex and a callsign from the feed."""
     h = (ac.hex or "").strip()
@@ -148,98 +142,36 @@ def top_n_v3_carousel(aircraft: Sequence[Aircraft], settings: Settings, n: int) 
     return [ac for ac, _ in ranked[:n]]
 
 
-@dataclass(frozen=True)
-class LowAircraftAlert:
-    aircraft: Aircraft
-    reason: str  # "altitude" | "rssi"
+_EMERGENCY_SQUAWKS = frozenset({"7500", "7600", "7700"})
 
 
-def is_low_aircraft(ac: Aircraft, settings: Settings) -> LowAircraftAlert | None:
-    if ac.altitude_ft is not None and ac.altitude_ft < settings.low_altitude_feet:
-        return LowAircraftAlert(aircraft=ac, reason="altitude")
-    if ac.rssi is not None and ac.rssi > settings.high_rssi_threshold:
-        return LowAircraftAlert(aircraft=ac, reason="rssi")
-    return None
-
-
-def pick_low_aircraft_alert(candidates: Sequence[Aircraft], settings: Settings) -> LowAircraftAlert | None:
-    """
-    If any aircraft triggers low-altitude or high-RSSI alert, return the most urgent.
-    Altitude tie-break: lowest altitude; RSSI tie-break: strongest signal.
-    """
-    alerts: List[LowAircraftAlert] = []
-    for ac in candidates:
-        hit = is_low_aircraft(ac, settings)
-        if hit is not None:
-            alerts.append(hit)
-    if not alerts:
-        return None
-
-    def sort_key(a: LowAircraftAlert) -> Tuple[int, float, float]:
-        alt = a.aircraft.altitude_ft
-        alt_key = 0 if alt is not None else 1
-        alt_val = float(alt) if alt is not None else 1e9
-        rssi = a.aircraft.rssi if a.aircraft.rssi is not None else -200.0
-        return (alt_key, alt_val, -rssi)
-
-    alerts.sort(key=sort_key)
-    return alerts[0]
-
-
-PanelAlertKind = Literal["emergency", "descent", "climb", "low", "overhead"]
-
-
-@dataclass(frozen=True)
-class PanelAlert:
-    aircraft: Aircraft
-    kind: PanelAlertKind
-
-
-def _is_emergency_squawk(ac: Aircraft) -> bool:
+def is_emergency_squawk(ac: Aircraft) -> bool:
     if not ac.squawk:
         return False
-    return ac.squawk in ("7500", "7600", "7700")
+    return ac.squawk in _EMERGENCY_SQUAWKS
 
 
-def _panel_alert_kind_for_aircraft(ac: Aircraft, settings: Settings) -> PanelAlertKind | None:
-    if _is_emergency_squawk(ac):
-        return "emergency"
-    thr = settings.rapid_rate_fpm
-    vr = ac.vertical_rate_fpm
-    if vr is not None and vr <= -thr:
-        return "descent"
-    if vr is not None and vr >= thr:
-        return "climb"
-    if ac.altitude_ft is not None and ac.altitude_ft < settings.low_altitude_feet:
-        return "low"
-    if ac.rssi is not None and ac.rssi > settings.high_rssi_threshold:
-        return "overhead"
+def find_aircraft_by_hex(rows: Sequence[Aircraft], hex_lower: str) -> Aircraft | None:
+    key = hex_lower.strip().lower()
+    for ac in rows:
+        if ac.hex == key:
+            return ac
     return None
 
 
-def pick_panel_alert(candidates: Sequence[Aircraft], settings: Settings) -> PanelAlert | None:
+def pick_emergency_squawk_aircraft(all_rows: Sequence[Aircraft], settings: Settings) -> Aircraft | None:
     """
-    Highest-priority alert among candidates (emergency > rapid > low > overhead).
-    Tie-break: higher aircraft score.
+    Best-scoring aircraft in ``all_rows`` with squawk 7500/7600/7700, or None.
+    Respects ``settings.squawk_alerting_enabled``.
     """
-    rank: dict[PanelAlertKind, int] = {
-        "emergency": 5,
-        "descent": 4,
-        "climb": 4,
-        "low": 2,
-        "overhead": 1,
-    }
-    best: PanelAlert | None = None
-    best_rank = -1
+    if not settings.squawk_alerting_enabled:
+        return None
+    best: Aircraft | None = None
     best_score = -1e9
-    for ac in candidates:
-        kind = _panel_alert_kind_for_aircraft(ac, settings)
-        if kind is None:
-            continue
-        r = rank[kind]
-        sc = score_aircraft(ac, settings)
-        if r > best_rank or (r == best_rank and sc > best_score):
-            best_rank = r
-            best_score = sc
-            best = PanelAlert(aircraft=ac, kind=kind)
+    for ac in all_rows:
+        if is_emergency_squawk(ac):
+            sc = score_aircraft(ac, settings)
+            if best is None or sc > best_score:
+                best = ac
+                best_score = sc
     return best

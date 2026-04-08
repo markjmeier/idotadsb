@@ -1,6 +1,7 @@
 from app.airline_colors import AIRLINE_COLORS, extract_airline_prefix, resolve_airline_accent_rgb
 from app.enrichment import (
     EnrichmentData,
+    _merge_enrichment,
     _parse_adsbdb_response,
     _parse_callsign_endpoint_response,
     _ssl_context_for_https,
@@ -110,3 +111,22 @@ def test_enrichment_identity_single_type_only() -> None:
     en = EnrichmentData(aircraft_type="E75L", route=None, airline=None)
     assert en.has_identity_card()
     assert en.identity_two_lines() == ("E75L", "")
+
+
+def test_merge_enrichment_fresh_route_wins_over_stale_cache() -> None:
+    """Cache updates must not preserve an old flight's route when ADSBDB returns a new one."""
+    stale = EnrichmentData(aircraft_type="B738", route="LIH→SFO", airline="United")
+    fresh = EnrichmentData(aircraft_type="B738", route="AUS→EWR", airline="United")
+    merged = _merge_enrichment(fresh, stale)
+    assert merged.route == "AUS→EWR"
+    # Anti-pattern: old first keeps stale route forever after refetch.
+    assert _merge_enrichment(stale, fresh).route == "LIH→SFO"
+
+
+def test_merge_enrichment_fresh_without_type_keeps_tail_from_cache() -> None:
+    """Callsign-only fetch may omit type; keep cached aircraft_type."""
+    prev = EnrichmentData(aircraft_type="B38M", route="EWR→ORD", airline=None)
+    cs_only = EnrichmentData(aircraft_type=None, route="AUS→EWR", airline="United")
+    merged = _merge_enrichment(cs_only, prev)
+    assert merged.aircraft_type == "B38M"
+    assert merged.route == "AUS→EWR"

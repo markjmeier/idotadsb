@@ -14,21 +14,28 @@ except ImportError:
 from app.aircraft_filter import (
     filter_aircraft,
     filter_degraded,
-    pick_best,
-    pick_panel_alert,
-    rank_aircraft,
-    top_n,
+    find_aircraft_by_hex,
+    is_emergency_squawk,
+    pick_emergency_squawk_aircraft,
     top_n_v3_carousel,
 )
 from app.aircraft_source import fetch_aircraft_json
 from app.config import Settings
 from app.display import create_display
 from app.enrichment import AdsbdbEnricher
-from app.models import Aircraft
-from app.panel_view import PanelView, panel_view_from_alert
+from app.panel_view import PanelView
+from app.quiet_hours import current_local_hour, in_quiet_hours_hour
 from app.v3_logic import v3_active_card
 
 logger = logging.getLogger(__name__)
+
+
+def _quiet_hours_now(settings: Settings) -> bool:
+    if not settings.quiet_hours_enabled:
+        return False
+    tz = settings.quiet_hours_timezone.strip()
+    h = current_local_hour(tz or None)
+    return in_quiet_hours_hour(h, settings.quiet_hours_start_hour, settings.quiet_hours_end_hour)
 
 
 @dataclass
@@ -37,7 +44,6 @@ class UiState:
     last_pushed_visual: str | None = None
     last_push_mono: float = 0.0
     pinned_hex: str | None = None
-    last_pin_change_mono: float = 0.0
     rotate_index: int = 0
     last_top_signature: tuple[str, ...] = field(default_factory=tuple)
     last_rotate_tick_mono: float = 0.0
@@ -49,6 +55,12 @@ class V3DisplayState:
     card_epoch_mono: float = 0.0
 
 
+@dataclass
+class SquawkLatchState:
+    """Hold emergency squawk display until that aircraft clears 75/76/77 or leaves the feed."""
+    latched_hex: str | None = None
+
+
 def _configure_logging(level_name: str) -> None:
     level = getattr(logging, level_name, logging.INFO)
     logging.basicConfig(
@@ -58,128 +70,110 @@ def _configure_logging(level_name: str) -> None:
     )
 
 
-def _choose_closest_with_debounce(
-    candidates: list[Aircraft],
-    settings: Settings,
-    state: UiState,
-    now: float,
-) -> Aircraft | None:
-    best = pick_best(candidates, settings)
-    if best is None:
-        return None
-    if (
-        state.pinned_hex
-        and (now - state.last_pin_change_mono) < settings.debounce_seconds
-    ):
-        pinned = [c for c in candidates if c.hex == state.pinned_hex]
-        if pinned:
-            return rank_aircraft(pinned, settings)[0][0]
-    return best
-
-
 def run_loop(settings: Settings, stop_flag: dict[str, bool]) -> None:
     display = create_display(settings)
     display.connect()
     state = UiState()
     state.last_rotate_tick_mono = time.monotonic()
     v3_state = V3DisplayState()
-    enricher = AdsbdbEnricher(settings) if settings.display_mode == "v3" else None
+    squawk_state = SquawkLatchState()
+    enricher = AdsbdbEnricher(settings) if settings.enable_adsbdb_enrichment else None
+    was_quiet = False
 
     try:
         while not stop_flag.get("stop"):
+            quiet = _quiet_hours_now(settings)
+            if quiet != was_quiet:
+                if quiet:
+                    logger.info("quiet hours: pausing feeder and enrichment; dimming display")
+                else:
+                    logger.info("quiet hours ended: resuming normal operation")
+                display.set_quiet_hours_active(quiet)
+                was_quiet = quiet
+                state.last_pushed_critical = None
+                state.last_pushed_visual = None
+            if quiet:
+                time.sleep(max(0.05, settings.quiet_hours_poll_interval_seconds))
+                continue
+
             now = time.monotonic()
             try:
-                raw = fetch_aircraft_json(settings.data_source_url, settings.http_timeout_seconds)
-                candidates = filter_aircraft(raw, settings, require_position=False)
+                all_ac = fetch_aircraft_json(settings.data_source_url, settings.http_timeout_seconds)
+                candidates = filter_aircraft(all_ac, settings, require_position=False)
                 if not candidates:
-                    candidates = filter_degraded(raw, settings.degraded_stale_seconds)
+                    candidates = filter_degraded(all_ac, settings.degraded_stale_seconds)
 
-                # v3: no full-screen alert takeovers (emergency-any-distance can be added later).
-                panel_alert = (
-                    None
-                    if settings.display_mode == "v3"
-                    else pick_panel_alert(candidates, settings)
-                )
+                squawk_active = False
+                view: PanelView
+                is_alert = False
 
-                if panel_alert is not None:
-                    view = panel_view_from_alert(panel_alert)
-                    is_alert = True
-                    state.pinned_hex = panel_alert.aircraft.hex
-                    state.last_pin_change_mono = now
-                elif not candidates:
-                    view = PanelView("idle", None, settings.idle_message)
-                    is_alert = False
-                    state.pinned_hex = None
-                    v3_state.card_epoch_mono = 0.0
-                elif settings.display_mode == "v3":
-                    is_alert = False
-                    ranked_top = top_n_v3_carousel(
-                        candidates, settings, settings.v3_rotate_top_n
-                    )
-                    sig = tuple(a.hex for a in ranked_top)
-                    if sig != state.last_top_signature:
-                        state.last_top_signature = sig
-                        state.rotate_index = 0
-                        state.last_rotate_tick_mono = now
-                        v3_state.card_epoch_mono = now
-                    if not ranked_top:
+                if settings.squawk_alerting_enabled:
+                    lh = squawk_state.latched_hex
+                    if lh:
+                        ac_l = find_aircraft_by_hex(all_ac, lh)
+                        if ac_l is None or not is_emergency_squawk(ac_l):
+                            squawk_state.latched_hex = None
+                            lh = None
+                    if lh:
+                        ac_hold = find_aircraft_by_hex(all_ac, lh)
+                        if ac_hold is not None and is_emergency_squawk(ac_hold):
+                            view = PanelView("alert_squawk", ac_hold, None)
+                            is_alert = True
+                            squawk_active = True
+                    if not squawk_active:
+                        new_hit = pick_emergency_squawk_aircraft(all_ac, settings)
+                        if new_hit is not None:
+                            squawk_state.latched_hex = new_hit.hex
+                            view = PanelView("alert_squawk", new_hit, None)
+                            is_alert = True
+                            squawk_active = True
+
+                if not squawk_active:
+                    if not candidates:
                         view = PanelView("idle", None, settings.idle_message)
+                        is_alert = False
                         state.pinned_hex = None
                         state.last_top_signature = ()
+                        v3_state.card_epoch_mono = 0.0
                     else:
-                        if now - state.last_rotate_tick_mono >= settings.rotate_interval_seconds:
-                            state.rotate_index = (state.rotate_index + 1) % len(ranked_top)
+                        ranked_top = top_n_v3_carousel(
+                            candidates, settings, settings.v3_rotate_top_n
+                        )
+                        sig = tuple(a.hex for a in ranked_top)
+                        if sig != state.last_top_signature:
+                            state.last_top_signature = sig
+                            state.rotate_index = 0
                             state.last_rotate_tick_mono = now
                             v3_state.card_epoch_mono = now
-                        ac = ranked_top[state.rotate_index]
-                        state.pinned_hex = ac.hex
-                        state.last_pin_change_mono = now
-                        if enricher is not None:
-                            for plane in ranked_top:
-                                enricher.schedule_fetch(plane.hex, plane.flight)
-                        en = enricher.get_cached(ac.hex) if enricher is not None else None
-                        card = v3_active_card(
-                            now,
-                            v3_state.card_epoch_mono,
-                            settings.card_rotation_seconds,
-                            en,
-                        )
-                        view = PanelView(
-                            "flight",
-                            ac,
-                            None,
-                            flight_card=card,
-                            enrichment=en,
-                        )
-                elif settings.display_mode == "rotate":
-                    is_alert = False
-                    ranked_top = top_n(candidates, settings, settings.rotate_top_n)
-                    sig = tuple(a.hex for a in ranked_top)
-                    if sig != state.last_top_signature:
-                        state.last_top_signature = sig
-                        state.rotate_index = 0
-                        state.last_rotate_tick_mono = now
-                    if not ranked_top:
-                        view = PanelView("idle", None, settings.idle_message)
-                    else:
-                        if now - state.last_rotate_tick_mono >= settings.rotate_interval_seconds:
-                            state.rotate_index = (state.rotate_index + 1) % len(ranked_top)
-                            state.last_rotate_tick_mono = now
-                        ac = ranked_top[state.rotate_index]
-                        view = PanelView("flight", ac, None)
-                        state.pinned_hex = ac.hex
-                        state.last_pin_change_mono = now
-                else:
-                    is_alert = False
-                    chosen = _choose_closest_with_debounce(candidates, settings, state, now)
-                    if chosen is None:
-                        view = PanelView("idle", None, settings.idle_message)
-                        state.pinned_hex = None
-                    else:
-                        view = PanelView("flight", chosen, None)
-                        if state.pinned_hex != chosen.hex:
-                            state.pinned_hex = chosen.hex
-                            state.last_pin_change_mono = now
+                        if not ranked_top:
+                            view = PanelView("idle", None, settings.idle_message)
+                            state.pinned_hex = None
+                            state.last_top_signature = ()
+                        else:
+                            if now - state.last_rotate_tick_mono >= settings.rotate_interval_seconds:
+                                state.rotate_index = (state.rotate_index + 1) % len(ranked_top)
+                                state.last_rotate_tick_mono = now
+                                v3_state.card_epoch_mono = now
+                            ac = ranked_top[state.rotate_index]
+                            state.pinned_hex = ac.hex
+                            if enricher is not None:
+                                for plane in ranked_top:
+                                    enricher.schedule_fetch(plane.hex, plane.flight)
+                            en = enricher.get_cached(ac.hex) if enricher is not None else None
+                            card = v3_active_card(
+                                now,
+                                v3_state.card_epoch_mono,
+                                settings.card_rotation_seconds,
+                                en,
+                            )
+                            view = PanelView(
+                                "flight",
+                                ac,
+                                None,
+                                flight_card=card,
+                                enrichment=en,
+                            )
+                            is_alert = False
 
                 crit = view.critical_fingerprint()
                 vis = view.visual_fingerprint()

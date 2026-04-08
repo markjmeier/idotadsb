@@ -24,14 +24,12 @@ FLIGHT_BOXES_64: dict[str, tuple[int, int, int, int]] = {
     "direction": (32, 44, 32, 20),
 }
 
-# Alerts: callsign top, altitude+FT, single alert label (no duplicate with title+state), speed|dir.
-# 14 + 12 + 10 + 28 = 64.
-ALERT_BOXES_64: dict[str, tuple[int, int, int, int]] = {
-    "callsign": (0, 0, 64, 14),
-    "altitude": (0, 14, 64, 12),
-    "alert_label": (0, 26, 64, 10),
-    "speed": (0, 36, 32, 28),
-    "direction": (32, 36, 32, 28),
+# Emergency squawk 7500/7600/7700: four equal bands (ALERT / SQUAWK / code / flight id).
+SQUAWK_ALERT_BOXES_64: dict[str, tuple[int, int, int, int]] = {
+    "l1": (0, 0, 64, 16),
+    "l2": (0, 16, 64, 16),
+    "l3": (0, 32, 64, 16),
+    "l4": (0, 48, 64, 16),
 }
 
 # version3spec Card A: 3 lines (no route), 64px tall.
@@ -375,10 +373,10 @@ def render_panel_view(
             _draw_flight_card_identity(img, ac, view, font_path, font_triple, profile, pixel_size)
         else:
             _draw_flight_contract(img, ac, font_path, font_triple, profile, pixel_size)
+    elif view.kind == "alert_squawk":
+        _draw_squawk_alert(img, ac, font_path, font_triple, profile, pixel_size, alert_panel=alert_panel)
     else:
-        _draw_alert_contract(
-            img, view.kind, ac, font_path, font_triple, profile, pixel_size, alert_panel=alert_panel
-        )
+        _draw_flight_contract(img, ac, font_path, font_triple, profile, pixel_size)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -539,9 +537,8 @@ def _draw_flight_contract(
     draw_speed_direction_same_font(img, spd_t, dir_t, boxes["speed"], boxes["direction"], font_path, font_triple, fg, bg)
 
 
-def _draw_alert_contract(
+def _draw_squawk_alert(
     img: Image.Image,
-    kind: str,
     ac,
     font_path: str,
     font_triple: tuple[int, int, int],
@@ -550,38 +547,12 @@ def _draw_alert_contract(
     *,
     alert_panel: bool,
 ) -> None:
-    from app.formatter import (
-        _format_speed_kt,
-        callsign_for_matrix,
-        format_altitude_k_ft,
-        track_to_cardinal,
-    )
+    from app.formatter import callsign_for_matrix
 
-    alert_labels = {
-        "alert_low": "LOW ✈",
-        "alert_overhead": "OVERHEAD ✈",
-        "alert_emergency": "EMERGENCY",
-        "alert_descent": "DESCENT",
-        "alert_climb": "CLIMB",
-    }
-    label = alert_labels.get(kind, "ALERT")
-    cs = callsign_for_matrix(ac)
-    alt_t = format_altitude_k_ft(ac.altitude_ft)
-    spd_t = _format_speed_kt(ac.speed_kt)
-    dir_t = track_to_cardinal(ac.track_deg)
-
+    fg = profile.alert_fg if alert_panel else profile.default_fg
     bg = profile.bg
-    if alert_panel:
-        text_fg = profile.alert_fg
-        cs_fg = profile.alert_fg
-    else:
-        text_fg = profile.default_fg
-        cs_fg = _callsign_accent_rgb(ac, profile)
-
-    boxes = _boxes_for_panel(ALERT_BOXES_64, pixel_size)
-    draw_text_in_box(img, cs, boxes["callsign"], font_path, font_triple, cs_fg, bg)
-    draw_text_in_box(img, alt_t, boxes["altitude"], font_path, font_triple, text_fg, bg)
-    draw_text_in_box(img, label, boxes["alert_label"], font_path, font_triple, text_fg, bg)
-    draw_speed_direction_same_font(
-        img, spd_t, dir_t, boxes["speed"], boxes["direction"], font_path, font_triple, text_fg, bg
-    )
+    sq = (ac.squawk or "").strip() or "---"
+    lines = ["ALERT", "SQUAWK", sq, callsign_for_matrix(ac)]
+    boxes = _boxes_for_panel(SQUAWK_ALERT_BOXES_64, pixel_size)
+    for key, text in zip(("l1", "l2", "l3", "l4"), lines, strict=True):
+        draw_text_in_box(img, text, boxes[key], font_path, font_triple, fg, bg)

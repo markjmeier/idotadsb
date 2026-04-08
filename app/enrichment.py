@@ -148,6 +148,13 @@ def _parse_callsign_endpoint_response(payload: object) -> EnrichmentData | None:
 
 
 def _merge_enrichment(a: EnrichmentData | None, b: EnrichmentData | None) -> EnrichmentData | None:
+    """
+    Field-wise OR merge: each field prefers ``a``, then ``b``.
+
+    When combining a **new HTTP response** with **cached** data, pass **fresh first** so
+    route/airline update when the flight changes; tail ``aircraft_type`` still falls back
+    to cache if the new payload omitted it (e.g. callsign-only endpoint).
+    """
     if a is None:
         return b
     if b is None:
@@ -249,7 +256,9 @@ class AdsbdbEnricher:
                             self._cache[key] = (None, time.monotonic() + ttl)
                     else:
                         if prev is not None and prev[0] is not None:
-                            data = _merge_enrichment(prev[0], data)
+                            # Prefer fresh ``data`` over ``prev`` so route/airline track the
+                            # current flight (callsign/refetch); do not keep stale LIH→SFO, etc.
+                            data = _merge_enrichment(data, prev[0])
                         self._cache[key] = (data, time.monotonic() + ttl)
                 if data is not None:
                     logger.debug(

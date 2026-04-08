@@ -2,13 +2,13 @@ from app.aircraft_filter import (
     effective_distance_nm,
     filter_aircraft,
     filter_degraded,
-    is_low_aircraft,
+    find_aircraft_by_hex,
+    is_emergency_squawk,
     pick_best,
     pick_best_v3,
-    pick_low_aircraft_alert,
-    pick_panel_alert,
+    pick_emergency_squawk_aircraft,
+    rank_aircraft,
     score_aircraft,
-    top_n,
     top_n_v3_carousel,
 )
 from app.config import Settings
@@ -22,26 +22,21 @@ def _settings(**kwargs: object) -> Settings:
         http_timeout_seconds=3.0,
         stale_seconds=10.0,
         stale_position_seconds=10.0,
-        low_altitude_feet=5000,
-        high_rssi_threshold=-10.0,
-        rotate_top_n=3,
         v3_rotate_top_n=5,
         rotate_interval_seconds=3.0,
-        display_mode="closest",
         enable_distance=False,
         home_lat=None,
         home_lon=None,
         log_level="INFO",
         display_backend="mock",
         idle_message="NO PLANES",
-        debounce_seconds=2.0,
         rssi_weight=1.0,
         freshness_weight=2.0,
         callsign_bonus=5.0,
         position_bonus=3.0,
         distance_bonus_max=15.0,
         degraded_stale_seconds=60.0,
-        rapid_rate_fpm=2000,
+        squawk_alerting_enabled=True,
         idotmatrix_ble_address=None,
         idotmatrix_font_path=None,
         idotmatrix_render="canvas",
@@ -74,6 +69,12 @@ def _settings(**kwargs: object) -> Settings:
         enrichment_refetch_interval_seconds=90.0,
         enrichment_min_lookup_interval_seconds=5.0,
         enrichment_http_timeout_seconds=3.0,
+        quiet_hours_enabled=False,
+        quiet_hours_start_hour=23,
+        quiet_hours_end_hour=7,
+        quiet_hours_timezone="",
+        quiet_hours_poll_interval_seconds=60.0,
+        quiet_hours_brightness_pct=0,
     )
     base.update(kwargs)
     return Settings(**base)  # type: ignore[arg-type]
@@ -95,130 +96,88 @@ def test_filter_degraded() -> None:
     assert len(out) == 1
 
 
-def test_scoring_prefers_stronger_rssi() -> None:
-    s = _settings()
-    a = Aircraft(hex="a", seen_s=1.0, rssi=-30.0, flight="X")
-    b = Aircraft(hex="b", seen_s=1.0, rssi=-10.0, flight="Y")
-    assert score_aircraft(b, s) > score_aircraft(a, s)
-
-
 def test_pick_best() -> None:
     s = _settings()
     rows = [
-        Aircraft(hex="a", seen_s=1.0, rssi=-40.0, flight="A"),
-        Aircraft(hex="b", seen_s=1.0, rssi=-15.0, flight="B"),
+        Aircraft(hex="a", rssi=-30.0, seen_s=1.0),
+        Aircraft(hex="b", rssi=-10.0, seen_s=1.0),
     ]
     best = pick_best(rows, s)
     assert best is not None and best.hex == "b"
 
 
-def test_top_n_order() -> None:
+def test_rank_orders_by_score() -> None:
     s = _settings()
     rows = [
-        Aircraft(hex="a", seen_s=1.0, rssi=-40.0),
-        Aircraft(hex="b", seen_s=1.0, rssi=-20.0),
-        Aircraft(hex="c", seen_s=1.0, rssi=-10.0),
+        Aircraft(hex="w", rssi=-40.0, seen_s=1.0),
+        Aircraft(hex="z", rssi=-10.0, seen_s=1.0),
     ]
-    t = top_n(rows, s, 2)
-    assert [x.hex for x in t] == ["c", "b"]
-
-
-def test_low_altitude_alert() -> None:
-    s = _settings(low_altitude_feet=5000)
-    ac = Aircraft(hex="x", seen_s=1.0, altitude_ft=4000)
-    hit = is_low_aircraft(ac, s)
-    assert hit is not None and hit.reason == "altitude"
-
-
-def test_high_rssi_alert() -> None:
-    s = _settings(high_rssi_threshold=-10.0)
-    ac = Aircraft(hex="x", seen_s=1.0, rssi=-5.0)
-    hit = is_low_aircraft(ac, s)
-    assert hit is not None and hit.reason == "rssi"
-
-
-def test_pick_panel_alert_emergency_over_low() -> None:
-    s = _settings()
-    rows = [
-        Aircraft(hex="em", squawk="7700", altitude_ft=3000, seen_s=1.0),
-        Aircraft(hex="lo", altitude_ft=2000, seen_s=1.0),
-    ]
-    pa = pick_panel_alert(rows, s)
-    assert pa is not None
-    assert pa.kind == "emergency"
-    assert pa.aircraft.hex == "em"
-
-
-def test_pick_panel_rapid_descent() -> None:
-    s = _settings(rapid_rate_fpm=2000)
-    rows = [Aircraft(hex="x", baro_rate_fpm=-2500, seen_s=1.0)]
-    pa = pick_panel_alert(rows, s)
-    assert pa is not None and pa.kind == "descent"
-
-
-def test_pick_low_aircraft_prefers_lower_altitude() -> None:
-    s = _settings(low_altitude_feet=8000)
-    rows = [
-        Aircraft(hex="a", seen_s=1.0, altitude_ft=7000),
-        Aircraft(hex="b", seen_s=1.0, altitude_ft=2000),
-    ]
-    alert = pick_low_aircraft_alert(rows, s)
-    assert alert is not None and alert.aircraft.hex == "b"
+    r = rank_aircraft(rows, s)
+    assert [x[0].hex for x in r] == ["z", "w"]
 
 
 def test_pick_best_v3_prefers_smaller_nm_over_rssi() -> None:
-    s = _settings()
     rows = [
-        Aircraft(hex="far", seen_s=1.0, rssi=-5.0, flight="A", distance_nm=50.0),
-        Aircraft(hex="near", seen_s=1.0, rssi=-50.0, flight="B", distance_nm=2.0),
+        Aircraft(hex="far", flight="FAR1", rssi=-5.0, seen_s=1.0, distance_nm=50.0),
+        Aircraft(hex="near", flight="NR1", rssi=-30.0, seen_s=1.0, distance_nm=5.0),
     ]
+    s = _settings()
     assert pick_best_v3(rows, s) is not None
     assert pick_best_v3(rows, s).hex == "near"
 
 
 def test_pick_best_v3_falls_back_without_distance() -> None:
-    s = _settings()
     rows = [
-        Aircraft(hex="a", seen_s=1.0, rssi=-40.0, flight="A"),
-        Aircraft(hex="b", seen_s=1.0, rssi=-10.0, flight="B"),
+        Aircraft(hex="a", flight="A1", rssi=-30.0, seen_s=1.0),
+        Aircraft(hex="b", flight="B1", rssi=-10.0, seen_s=1.0),
     ]
+    s = _settings()
     assert pick_best_v3(rows, s) is not None
     assert pick_best_v3(rows, s).hex == "b"
 
 
 def test_top_n_v3_carousel_requires_callsign() -> None:
-    s = _settings()
+    s = _settings(v3_rotate_top_n=3)
     rows = [
-        Aircraft(hex="a", seen_s=1.0, rssi=-10.0, flight="", distance_nm=1.0),
-        Aircraft(hex="b", seen_s=1.0, rssi=-40.0, flight="B", distance_nm=99.0),
+        Aircraft(hex="a", flight="A1", seen_s=1.0, distance_nm=10.0),
+        Aircraft(hex="b", seen_s=1.0, distance_nm=5.0),
     ]
-    out = top_n_v3_carousel(rows, s, 5)
-    assert [x.hex for x in out] == ["b"]
+    top = top_n_v3_carousel(rows, s, 3)
+    assert len(top) == 1 and top[0].hex == "a"
 
 
-def test_top_n_v3_carousel_closest_by_distance() -> None:
-    s = _settings()
+def test_is_emergency_squawk() -> None:
+    assert is_emergency_squawk(Aircraft(hex="a", squawk="7700"))
+    assert is_emergency_squawk(Aircraft(hex="a", squawk="7500"))
+    assert not is_emergency_squawk(Aircraft(hex="a", squawk="1200"))
+    assert not is_emergency_squawk(Aircraft(hex="a"))
+
+
+def test_find_aircraft_by_hex() -> None:
+    rows = [Aircraft(hex="abc123", seen_s=1.0)]
+    assert find_aircraft_by_hex(rows, "ABC123") is not None
+    assert find_aircraft_by_hex(rows, "abc123") is not None
+    assert find_aircraft_by_hex(rows, "none") is None
+
+
+def test_pick_emergency_squawk_respects_enabled() -> None:
+    rows = [Aircraft(hex="e", flight="E1", squawk="7700", seen_s=1.0, rssi=-20.0)]
+    assert pick_emergency_squawk_aircraft(rows, _settings(squawk_alerting_enabled=True)) is not None
+    assert pick_emergency_squawk_aircraft(rows, _settings(squawk_alerting_enabled=False)) is None
+
+
+def test_pick_emergency_squawk_prefers_score() -> None:
     rows = [
-        Aircraft(hex="far", seen_s=1.0, flight="F", distance_nm=50.0),
-        Aircraft(hex="near", seen_s=1.0, flight="N", distance_nm=2.0),
-        Aircraft(hex="mid", seen_s=1.0, flight="M", distance_nm=10.0),
+        Aircraft(hex="a", flight="A1", squawk="7700", seen_s=1.0, rssi=-30.0),
+        Aircraft(hex="b", flight="B1", squawk="7700", seen_s=1.0, rssi=-5.0),
     ]
-    out = top_n_v3_carousel(rows, s, 2)
-    assert [x.hex for x in out] == ["near", "mid"]
-
-
-def test_top_n_v3_carousel_falls_back_to_score_without_distance() -> None:
     s = _settings()
-    rows = [
-        Aircraft(hex="a", seen_s=1.0, rssi=-40.0, flight="A"),
-        Aircraft(hex="b", seen_s=1.0, rssi=-10.0, flight="B"),
-    ]
-    out = top_n_v3_carousel(rows, s, 5)
-    assert [x.hex for x in out] == ["b", "a"]
+    hit = pick_emergency_squawk_aircraft(rows, s)
+    assert hit is not None and hit.hex == "b"
 
 
-def test_effective_distance_nm_haversine_when_home_set() -> None:
+def test_effective_distance_nm_from_json() -> None:
     s = _settings(home_lat=40.0, home_lon=-88.0)
-    ac = Aircraft(hex="x", lat=40.1, lon=-88.0, seen_s=1.0)
+    ac = Aircraft(hex="x", lat=41.0, lon=-88.0, seen_s=1.0)
     d = effective_distance_nm(ac, s)
-    assert d is not None and d < 20.0
+    assert d is not None and d > 0

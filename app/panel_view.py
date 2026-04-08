@@ -6,25 +6,13 @@ from typing import Literal
 from app.enrichment import EnrichmentData
 from app.formatter import (
     callsign_or_hex,
-    format_altitude_k,
     format_closest_marquee,
     format_idle_marquee,
-    format_low_alert_marquee,
     vertical_motion_state,
 )
 from app.models import Aircraft
 
-from app.aircraft_filter import PanelAlert, PanelAlertKind
-
-PanelKind = Literal[
-    "flight",
-    "idle",
-    "alert_low",
-    "alert_overhead",
-    "alert_emergency",
-    "alert_descent",
-    "alert_climb",
-]
+PanelKind = Literal["flight", "idle", "alert_squawk"]
 
 
 @dataclass(frozen=True)
@@ -43,6 +31,9 @@ class PanelView:
             return f"idle:{(self.idle_message or '').strip().lower()}"
         if self.aircraft is None:
             return self.kind
+        if self.kind == "alert_squawk":
+            sq = (self.aircraft.squawk or "").strip()
+            return f"alert_squawk:{self.aircraft.hex}:{sq}"
         return f"{self.kind}:{self.aircraft.hex}"
 
     def visual_fingerprint(self) -> str:
@@ -73,10 +64,8 @@ class PanelView:
             t = float(d) % 360.0
             return str(int((t + 22.5) // 45) % 8)
 
-        def q_vr(v: int | None) -> str:
-            if v is None:
-                return "na"
-            return str(int(v // 300) * 300)
+        if self.kind == "alert_squawk":
+            return f"sq|{ac.squawk or 'na'}|{callsign_or_hex(ac).strip().upper()}"
 
         if self.kind == "flight":
             parts: list[str] = []
@@ -101,18 +90,6 @@ class PanelView:
                     parts.append(extra)
             return "|".join(parts)
 
-        if self.kind == "alert_low":
-            return f"low|{q_alt(ac.altitude_ft)}|{q_vr(ac.vertical_rate_fpm)}"
-
-        if self.kind in ("alert_descent", "alert_climb"):
-            return f"{self.kind}|{q_vr(ac.vertical_rate_fpm)}|{q_alt(ac.altitude_ft)}"
-
-        if self.kind == "alert_emergency":
-            return f"em|{ac.squawk or 'na'}"
-
-        if self.kind == "alert_overhead":
-            return "ovh"
-
         return self.kind
 
 
@@ -129,19 +106,10 @@ def panel_view_to_marquee(view: PanelView) -> str:
             if pair:
                 return f"{callsign_or_hex(ac)} {pair[0]} {pair[1]}"
         return format_closest_marquee(ac)
-    if view.kind == "alert_low":
-        return format_low_alert_marquee(ac)
-    if view.kind == "alert_overhead":
-        return f"OVH {callsign_or_hex(ac)}"
-    if view.kind == "alert_emergency":
+    if view.kind == "alert_squawk":
         sq = (ac.squawk or "").strip()
         cs = callsign_or_hex(ac)
-        return f"EM {sq} {cs}".strip() if sq else f"EM {cs}"
-    if view.kind == "alert_descent":
-        return f"DN {callsign_or_hex(ac)}"
-    if view.kind == "alert_climb":
-        # Avoid "CLIMB" in static mode — firmware uses ~4×2 glyphs/page and splits words (CLIM | B).
-        return f"UP {callsign_or_hex(ac)}"
+        return f"ALERT SQ{sq} {cs}".strip() if sq else f"ALERT {cs}"
     return callsign_or_hex(ac)
 
 
@@ -162,6 +130,9 @@ def panel_view_mock_text(view: PanelView) -> str:
     if view.aircraft is None:
         return "—"
     ac = view.aircraft
+    if view.kind == "alert_squawk":
+        sq = (ac.squawk or "").strip() or "---"
+        return f"ALERT\nSQUAWK\n{sq}\n{callsign_for_matrix(ac)}"
     if view.kind == "flight":
         cs = callsign_for_matrix(ac)
         if view.flight_card == "identity" and view.enrichment is not None:
@@ -180,50 +151,4 @@ def panel_view_mock_text(view: PanelView) -> str:
         spd = _format_speed_kt(ac.speed_kt)
         card = track_to_cardinal(ac.track_deg)
         return f"{cs}\n{alt}\n{st}\n{spd}  {card}"
-    alert_line = {
-        "alert_low": "LOW ✈",
-        "alert_overhead": "OVERHEAD ✈",
-        "alert_emergency": "EMERGENCY",
-        "alert_descent": "DESCENT",
-        "alert_climb": "CLIMB",
-    }
-    if view.kind == "alert_low":
-        return (
-            f"{callsign_for_matrix(ac)}\n{format_altitude_k_ft(ac.altitude_ft)}\n"
-            f"{alert_line['alert_low']}\n{_format_speed_kt(ac.speed_kt)}  {track_to_cardinal(ac.track_deg)}"
-        )
-    if view.kind == "alert_overhead":
-        rssi = f"\nRSSI {int(round(ac.rssi))}dB" if ac.rssi is not None else ""
-        return (
-            f"{callsign_for_matrix(ac)}\n{format_altitude_k_ft(ac.altitude_ft)}\n"
-            f"{alert_line['alert_overhead']}\n{_format_speed_kt(ac.speed_kt)}  {track_to_cardinal(ac.track_deg)}{rssi}"
-        )
-    if view.kind == "alert_emergency":
-        sq = (ac.squawk or "").strip()
-        sq_l = f"\nSQ {sq}" if sq else ""
-        return (
-            f"{callsign_for_matrix(ac)}\n{format_altitude_k_ft(ac.altitude_ft)}\n"
-            f"{alert_line['alert_emergency']}\n{_format_speed_kt(ac.speed_kt)}  {track_to_cardinal(ac.track_deg)}{sq_l}"
-        )
-    if view.kind == "alert_descent":
-        return (
-            f"{callsign_for_matrix(ac)}\n{format_altitude_k_ft(ac.altitude_ft)}\n"
-            f"{alert_line['alert_descent']}\n{_format_speed_kt(ac.speed_kt)}  {track_to_cardinal(ac.track_deg)}"
-        )
-    if view.kind == "alert_climb":
-        return (
-            f"{callsign_for_matrix(ac)}\n{format_altitude_k_ft(ac.altitude_ft)}\n"
-            f"{alert_line['alert_climb']}\n{_format_speed_kt(ac.speed_kt)}  {track_to_cardinal(ac.track_deg)}"
-        )
     return f"ALERT\n{callsign_or_hex(ac)}"
-
-
-def panel_view_from_alert(pa: PanelAlert) -> PanelView:
-    m: dict[PanelAlertKind, PanelKind] = {
-        "emergency": "alert_emergency",
-        "descent": "alert_descent",
-        "climb": "alert_climb",
-        "low": "alert_low",
-        "overhead": "alert_overhead",
-    }
-    return PanelView(m[pa.kind], pa.aircraft, None)
