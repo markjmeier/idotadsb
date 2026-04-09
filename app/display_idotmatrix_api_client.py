@@ -104,6 +104,7 @@ class IDotMatrixApiClientDisplay(Display):
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._runner = _AsyncLoopThread()
+        self._ble_lock = threading.Lock()
         self._connected = False
         self._client: Any = None
         self._render_px = idotmatrix_panel_edge_pixels(settings.idotmatrix_pixel_size)
@@ -178,14 +179,15 @@ class IDotMatrixApiClientDisplay(Display):
             self._connected = False
             return
         self._runner.start()
-        try:
-            self._runner.run_coro(self._async_connect(), timeout=60.0)
-            self._connected = True
-            logger.info("IDotMatrixApiClientDisplay: connected (%s×%s)", self._render_px, self._render_px)
-        except Exception as e:
-            logger.warning("IDotMatrixApiClientDisplay connect failed (will retry on send): %s", e)
-            self._connected = False
-            self._client = None
+        with self._ble_lock:
+            try:
+                self._runner.run_coro(self._async_connect(), timeout=60.0)
+                self._connected = True
+                logger.info("IDotMatrixApiClientDisplay: connected (%s×%s)", self._render_px, self._render_px)
+            except Exception as e:
+                logger.warning("IDotMatrixApiClientDisplay connect failed (will retry on send): %s", e)
+                self._connected = False
+                self._client = None
 
     def _canvas_fg_bg(self) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
         s = self._settings
@@ -254,20 +256,27 @@ class IDotMatrixApiClientDisplay(Display):
         async def _go() -> None:
             await self._async_upload_png(png_raw, chrome_rgb)
 
-        try:
-            self._runner.run_coro(_go(), timeout=45.0)
-            return True
-        except Exception as e:
-            logger.warning("IDotMatrixApiClientDisplay upload failed: %s", e)
-            self._connected = False
+        async def _reconnect_after_failure() -> None:
+            # Let BlueZ / the panel finish teardown so we do not hit
+            # [org.bluez.Error.Failed] Operation already in progress on reconnect.
+            await asyncio.sleep(0.75)
+            await self._async_connect()
+
+        with self._ble_lock:
             try:
-                self._runner.run_coro(self._async_connect(), timeout=60.0)
-                self._connected = True
                 self._runner.run_coro(_go(), timeout=45.0)
                 return True
-            except Exception as e2:
-                logger.warning("IDotMatrixApiClientDisplay reconnect failed: %s", e2)
-                return False
+            except Exception as e:
+                logger.warning("IDotMatrixApiClientDisplay upload failed: %s", e)
+                self._connected = False
+                try:
+                    self._runner.run_coro(_reconnect_after_failure(), timeout=90.0)
+                    self._connected = True
+                    self._runner.run_coro(_go(), timeout=45.0)
+                    return True
+                except Exception as e2:
+                    logger.warning("IDotMatrixApiClientDisplay reconnect failed: %s", e2)
+                    return False
 
     async def _async_set_brightness_clamped(self, pct: int) -> None:
         client = self._client
@@ -326,12 +335,13 @@ class IDotMatrixApiClientDisplay(Display):
                 await self._async_exit_quiet_hours()
                 self._quiet_hours_active = False
 
-        try:
-            self._runner.run_coro(_go(), timeout=45.0)
-        except Exception as e:
-            logger.warning("set_quiet_hours_active(%s): %s", active, e)
-            if active:
-                self._quiet_hours_active = False
+        with self._ble_lock:
+            try:
+                self._runner.run_coro(_go(), timeout=45.0)
+            except Exception as e:
+                logger.warning("set_quiet_hours_active(%s): %s", active, e)
+                if active:
+                    self._quiet_hours_active = False
 
     def _flatten(self, text: str) -> str:
         return "  ".join(line.strip() for line in text.splitlines() if line.strip())
@@ -403,20 +413,25 @@ class IDotMatrixApiClientDisplay(Display):
             )
             return self._upload_png(png_raw, None)
 
-        try:
-            self._runner.run_coro(_go_text(), timeout=45.0)
-            return True
-        except Exception as e:
-            logger.warning("IDotMatrixApiClientDisplay text failed: %s", e)
-            self._connected = False
+        async def _reconnect_after_failure() -> None:
+            await asyncio.sleep(0.75)
+            await self._async_connect()
+
+        with self._ble_lock:
             try:
-                self._runner.run_coro(self._async_connect(), timeout=60.0)
-                self._connected = True
                 self._runner.run_coro(_go_text(), timeout=45.0)
                 return True
-            except Exception as e2:
-                logger.warning("IDotMatrixApiClientDisplay reconnect failed: %s", e2)
-                return False
+            except Exception as e:
+                logger.warning("IDotMatrixApiClientDisplay text failed: %s", e)
+                self._connected = False
+                try:
+                    self._runner.run_coro(_reconnect_after_failure(), timeout=90.0)
+                    self._connected = True
+                    self._runner.run_coro(_go_text(), timeout=45.0)
+                    return True
+                except Exception as e2:
+                    logger.warning("IDotMatrixApiClientDisplay reconnect failed: %s", e2)
+                    return False
 
     def show_text(self, text: str) -> None:
         if not self._runner.is_running:

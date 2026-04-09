@@ -150,6 +150,8 @@ See `.env.example` for the full list.
 
 ## Running
 
+Use **Python 3.12 or 3.13** when installing dependencies (the GitHub `idotmatrix-api-client` line requires it). If `python3 --version` is older, use `python3.12 -m venv .venv` (or install 3.12 first).
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
@@ -171,7 +173,7 @@ The project uses a **repo-local** env at **`.venv/`** (gitignored). After `cd` t
 
 You should see `(.venv)` in the prompt and `which python` / `where python` pointing inside `.venv`. Then run `python -m app.main` as usual.
 
-If **`.venv` is missing**, recreate it with the block at the top of this section (`python3 -m venv .venv` → activate → `pip install -r requirements.txt`).
+If **`.venv` is missing**, recreate it with the block at the top of this section (use `python3.12 -m venv .venv` on systems whose default `python3` is still 3.9/3.10) → activate → `pip install -r requirements.txt`.
 
 **Tests:** `pytest` from repo root (see `pytest.ini`).
 
@@ -183,7 +185,8 @@ If **`.venv` is missing**, recreate it with the block at the top of this section
 
 ### 1. Prerequisites on the Pi
 
-- **Raspberry Pi OS** (or similar) with **Python 3.11+** (`python3 --version`).
+- **Python 3.12 or 3.13** for the BLE stack: `idotmatrix-api-client` requires **`>=3.12,<3.14`**. Raspberry Pi OS **Bullseye** still ships **Python 3.9** as `python3` — that is **too old** and `pip install` will fail with “requires a different Python”. Prefer **Pi OS Bookworm** (or newer) and install **`python3.12`** (see below), or point your venv at any 3.12/3.13 you install via `pyenv` / another method.
+- Check: `python3 --version` and, after installing: `python3.12 --version`.
 - **Network** to your ADS-B host (same LAN is typical). The Pi must open `DATA_SOURCE_URL` (often `http://<feeder-ip>/skyaware/data/aircraft.json`).
 - **Bluetooth** enabled and **BlueZ** running (default on Pi OS Desktop; on Lite, install/enable Bluetooth packages as needed).
 - **Git** installed (`sudo apt update && sudo apt install -y git`) — required for `pip` to install the GitHub `idotmatrix-api-client` line in `requirements.txt`.
@@ -211,18 +214,26 @@ Then on the Pi: `cd ~/idotadsb` (or your path).
 
 ### 3. Python venv and dependencies
 
+On **Bookworm** (and many current Debian-based images), install a 3.12 toolchain and build headers, then create the venv with **`python3.12`** (not plain `python3` if that is still 3.9):
+
 ```bash
+sudo apt update
+sudo apt install -y python3.12 python3.12-venv python3.12-dev git \
+  libjpeg-dev zlib1g-dev libffi-dev libssl-dev
+
 cd ~/idotadsb   # or your clone path
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-If **Pillow** fails to build wheels, install build deps then retry:
+If **`python3.12` is not found**, your OS may be too old for the stock packages: **upgrade Raspberry Pi OS to Bookworm** (64-bit recommended), or install Python 3.12 another way (e.g. [pyenv](https://github.com/pyenv/pyenv)) and use that binary for `python3.12 -m venv .venv`.
+
+If **Pillow** fails with **“headers or library files could not be found for jpeg”** (or pip builds Pillow from source and errors), install JPEG/zlib dev libs and retry:
 
 ```bash
-sudo apt install -y python3-dev libjpeg-dev zlib1g-dev
+sudo apt install -y python3.12-dev libjpeg-dev zlib1g-dev libjpeg62-turbo-dev
 pip install -r requirements.txt
 ```
 
@@ -291,7 +302,7 @@ journalctl -u idotadsb.service -f
 
 ## systemd (optional, Linux / Pi)
 
-Example unit (adjust paths and user):
+Example unit (adjust **`User=`** / **`Group=`** and paths if your login is not **`pi`**):
 
 ```ini
 [Unit]
@@ -300,6 +311,8 @@ After=network-online.target
 
 [Service]
 Type=simple
+User=pi
+Group=pi
 WorkingDirectory=/home/pi/idotadsb
 EnvironmentFile=/home/pi/idotadsb/.env
 ExecStart=/home/pi/idotadsb/.venv/bin/python -m app.main

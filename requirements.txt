@@ -1,5 +1,7 @@
 # idotadsb — runtime + tests + canvas + BLE (DISPLAY_BACKEND=idotmatrix_api_client).
 #
+# Python: use 3.12 or 3.13 for the BLE client — idotmatrix-api-client declares requires-python >=3.12,<3.14.
+#
 # The GitHub line below is markusressel/idotmatrix-api-client (import name: idotmatrix).
 # It is NOT the unrelated PyPI package named idotmatrix. If you had the wrong one:
 #   pip uninstall -y idotmatrix
