@@ -11,73 +11,9 @@ from app.aircraft_filter import (
     score_aircraft,
     top_n_v3_carousel,
 )
-from app.config import Settings
 from app.models import Aircraft
 
-
-def _settings(**kwargs: object) -> Settings:
-    base = dict(
-        data_source_url="http://x",
-        poll_interval_seconds=1.0,
-        http_timeout_seconds=3.0,
-        stale_seconds=10.0,
-        stale_position_seconds=10.0,
-        v3_rotate_top_n=5,
-        rotate_interval_seconds=3.0,
-        enable_distance=False,
-        home_lat=None,
-        home_lon=None,
-        log_level="INFO",
-        display_backend="mock",
-        idle_message="NO PLANES",
-        rssi_weight=1.0,
-        freshness_weight=2.0,
-        callsign_bonus=5.0,
-        position_bonus=3.0,
-        distance_bonus_max=15.0,
-        degraded_stale_seconds=60.0,
-        squawk_alerting_enabled=True,
-        idotmatrix_ble_address=None,
-        idotmatrix_font_path=None,
-        idotmatrix_render="canvas",
-        idotmatrix_text_mode=1,
-        idotmatrix_font_size=11,
-        idotmatrix_pixel_size=64,
-        idotmatrix_fg_rgb=(255, 255, 255),
-        idotmatrix_bg_rgb=(0, 0, 0),
-        display_min_refresh_seconds=4.0,
-        idotmatrix_ble_upload_cap=32,
-        idotmatrix_swap_fg_bg=False,
-        idotmatrix_brightness_pct=None,
-        idotmatrix_diy_reset=True,
-        idotmatrix_diy_snap_colors=True,
-        card_rotation_seconds=3.0,
-        aircraft_hold_seconds=60.0,
-        min_card_rotation_seconds=2.0,
-        max_card_rotation_seconds=4.0,
-        v3_enable_airline_colors=False,
-        v3_default_text_rgb=(255, 255, 255),
-        v3_default_accent_rgb=(180, 200, 255),
-        v3_alert_rgb=(255, 80, 80),
-        v3_climb_rgb=(255, 191, 0),
-        v3_descent_rgb=(80, 200, 255),
-        v3_level_rgb=(120, 255, 120),
-        v3_unknown_airline_rgb=(200, 200, 200),
-        enable_adsbdb_enrichment=False,
-        adsbdb_api_base="https://api.adsbdb.com",
-        enrichment_cache_ttl_seconds=1800.0,
-        enrichment_refetch_interval_seconds=90.0,
-        enrichment_min_lookup_interval_seconds=5.0,
-        enrichment_http_timeout_seconds=3.0,
-        quiet_hours_enabled=False,
-        quiet_hours_start_hour=23,
-        quiet_hours_end_hour=7,
-        quiet_hours_timezone="",
-        quiet_hours_poll_interval_seconds=60.0,
-        quiet_hours_brightness_pct=0,
-    )
-    base.update(kwargs)
-    return Settings(**base)  # type: ignore[arg-type]
+from tests.helpers import make_test_settings as _settings
 
 
 def test_filter_fresh_seen() -> None:

@@ -1,6 +1,6 @@
 # idotadsb
 
-Personal **ADS-B** feeder → **iDotMatrix** LED panel: poll `aircraft.json` from a raspberry pi, render a small flight UI, upload over Bluetooth to a 64x64 idotmatrix display. See **[docs/PRODUCTION.md](docs/PRODUCTION.md)** for architecture, configuration, and how to run it.
+Personal **ADS-B** feeder → **iDotMatrix** LED panel: poll `aircraft.json` from a raspberry pi, render a small flight UI, upload over Bluetooth to a 64x64 idotmatrix display. See **[docs/PRODUCTION.md](docs/PRODUCTION.md)** for architecture, configuration, and how to run it. Optional refactor ideas (not commitments) are in **[docs/REFACTOR_ROADMAP.md](docs/REFACTOR_ROADMAP.md)**.
 
 ## Why this exists (and how to read it)
 

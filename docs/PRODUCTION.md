@@ -34,19 +34,21 @@ flowchart LR
     SRC["aircraft_source"]
     FILT["aircraft_filter"]
     MAIN["main.run_loop"]
+    RC["run_cycle.resolve_panel_view"]
     ENR["enrichment.AdsbdbEnricher"]
     PV["panel_view.PanelView"]
     MC["matrix_canvas.render_panel_view"]
     DISP["display.*"]
   end
   JSON --> SRC --> MAIN
-  MAIN --> FILT
+  MAIN --> RC
+  RC --> FILT
   MAIN --> ENR
   API -.-> ENR
-  MAIN --> PV --> MC --> DISP
+  RC --> PV --> MC --> DISP
 ```
 
-(Quiet-hours and squawk logic live inside `main.run_loop`; `app/quiet_hours.py` supplies the time window helper.)
+(Quiet-hours gating lives in `main.run_loop`; squawk/v3 carousel steps and filtering run inside `app/run_cycle.py`; `app/quiet_hours.py` supplies the time window helper.)
 
 | Module | Role |
 |--------|------|
@@ -54,7 +56,8 @@ flowchart LR
 | `app/aircraft_source.py` | HTTP fetch + parse JSON → `list[Aircraft]` |
 | `app/aircraft_filter.py` | Freshness, scoring, `top_n_v3_carousel`, emergency squawk helpers |
 | `app/quiet_hours.py` | Local hour + overnight/same-day window for quiet hours |
-| `app/main.py` | Main loop: quiet gate → squawk latch → v3 carousel → `display.show_panel()` |
+| `app/main.py` | Main loop: quiet gate → fetch feed → `display.show_panel()` |
+| `app/run_cycle.py` | Per-poll panel: squawk latch → v3 carousel → `PanelView`; refresh debouncing (`resolve_panel_view`, `should_refresh_display`) |
 | `app/enrichment.py` | Background ADSBDB fetch, cache, merge with callsign endpoint |
 | `app/panel_view.py` | `PanelView` kinds: `flight` / `idle` / `alert_squawk` + fingerprints |
 | `app/matrix_canvas.py` | PNG layout (v3 cards, squawk 4-line alert) |
@@ -336,6 +339,8 @@ Ensure the service user can use **Bluetooth** (often `bluetooth` group).
 ## Related files (local, not in git)
 
 The `docs/specs/` directory is **gitignored**. Keep your own copies there if you want layout/UI reference docs alongside the repo.
+
+**Tracked maintenance notes:** optional future refactors and when they might be worth doing are listed in **[`REFACTOR_ROADMAP.md`](REFACTOR_ROADMAP.md)** (confirm before implementing).
 
 ---
 
