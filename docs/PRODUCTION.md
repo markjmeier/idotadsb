@@ -2,6 +2,12 @@
 
 Personal ADS-B feeder → iDotMatrix LED panel. This doc summarizes **architecture**, **v3 UI**, **optional squawk + quiet hours**, **ADSBDB enrichment**, and **how to run reliably**. Optional design specs (gitignored) can live under `docs/specs/` — e.g. `docs/specs/layoutcontract.md`, `docs/specs/version3spec.md`.
 
+## Acknowledgments
+
+**BLE / iDotMatrix:** Hardware uploads use **[markusressel/idotmatrix-api-client](https://github.com/markusressel/idotmatrix-api-client)** (declared in `requirements.txt`; Python import `idotmatrix`). idotadsb is a separate application that depends on that library for Bluetooth to the panel; the upstream repo is the right place for issues and changes to the client itself.
+
+**License:** idotadsb is under **GNU GPLv3** — see the `LICENSE` file in the repository root.
+
 ---
 
 ## What it does
